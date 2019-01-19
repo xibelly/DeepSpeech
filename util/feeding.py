@@ -173,8 +173,8 @@ class _TowerFeeder(object):
         Draw the next batch from from the combined switchable queue.
         '''
         source, source_lengths, target, target_lengths = self._queue.dequeue_many(self._model_feeder.ph_batch_size)
-        sparse_labels = ctc_label_dense_to_sparse(target, target_lengths, self._model_feeder.ph_batch_size)
-        return source, source_lengths, sparse_labels
+        # sparse_labels = ctc_label_dense_to_sparse(target, target_lengths, self._model_feeder.ph_batch_size)
+        return source, source_lengths, target
 
     def start_queue_threads(self, session, coord):
         '''

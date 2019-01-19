@@ -41,7 +41,7 @@ the cv_LOCALE_valid.csv file.
 
 
 data_dir =  sys.argv[1]
-LOCALE = sys.argv[2]
+# LOCALE = sys.argv[2]
 clips_tsv =  sys.argv[3]
 output_folder = sys.argv[4]
 
@@ -62,97 +62,114 @@ print("### Total valid+invalid clips per lang ###")
 print(clips['locale'].value_counts())
 print("############################")
 
-# pull out data for just one language
-locale = clips[clips['locale'] == LOCALE]
+shared_train = []
+shared_dev = []
+
+for LOCALE in ['br', 'ca', 'cv', 'cy', 'de', 'en', 'fr', 'ga-IE', 'it', 'kab', 'sl', 'tr', 'tt']:
+    # pull out data for just one language
+    locale = clips[clips['locale'] == LOCALE]
 
 
-### REASSIGN TEXT / DEV / TRAIN ###
-# locale['ID'] = locale['path'].str.split('/', expand = True)[0]
-locale.loc[:,'ID'] = locale.loc[:,'path'].str.split('/', expand = True)[0]
-speaker_counts = locale['ID'].value_counts()
-speaker_counts = speaker_counts.to_frame().reset_index()
-speaker_counts.columns= ['ID', 'counts']
-speaker_counts['cum_sum'] = speaker_counts.counts.cumsum()
-speaker_counts['cum_perc'] = 100 * speaker_counts.cum_sum / speaker_counts.counts.sum()
+    ### REASSIGN TEXT / DEV / TRAIN ###
+    # locale['ID'] = locale['path'].str.split('/', expand = True)[0]
+    locale.loc[:,'ID'] = locale.loc[:,'path'].str.split('/', expand = True)[0]
+    speaker_counts = locale['ID'].value_counts()
+    speaker_counts = speaker_counts.to_frame().reset_index()
+    speaker_counts.columns= ['ID', 'counts']
+    speaker_counts['cum_sum'] = speaker_counts.counts.cumsum()
+    speaker_counts['cum_perc'] = 100 * speaker_counts.cum_sum / speaker_counts.counts.sum()
 
-def bucket(row):
-    if (row.cum_perc > 0.0) and( row.cum_perc < 80.0) :
-        return "train"
-    elif (row.cum_perc > 80.0) and( row.cum_perc < 90.0) :
-        return "dev"
-    elif (row.cum_perc > 90.0) and( row.cum_perc <= 100.0) :
-        return "test"
-    
-speaker_counts.loc[:, 'new_bucket'] = speaker_counts.apply(bucket, axis = 1)
-# locale['new_bucket']=locale['ID'].map(speaker_counts.set_index('ID')['new_bucket'])
-locale.loc[:, 'new_bucket'] = locale['ID'].map(speaker_counts.set_index('ID')['new_bucket'])
-### REASSIGN TEXT / DEV / TRAIN ###
-print(locale.head())
+    def bucket(row):
+        if 0.0 <= row.cum_perc < 80.0:
+            return "train"
+        elif 80.0 <= row.cum_perc < 90.0:
+            return "dev"
+        elif 90.0 <= row.cum_perc <= 100.0:
+            return "test"
 
-
-locale.loc[:,'path'] = locale.loc[:,'path'].str.replace('/', '___')
-locale.loc[:,'path'] = locale.loc[:,'path'].str.replace('mp3', 'wav')
-dev_paths = locale[locale['new_bucket'] == 'dev'].loc[:, ['path']]
-test_paths = locale[locale['new_bucket'] == 'test'].loc[:, ['path']]
-train_paths = locale[locale['new_bucket'] == 'train'].loc[:, ['path']]
+    speaker_counts.loc[:, 'new_bucket'] = speaker_counts.apply(bucket, axis = 1)
+    # locale['new_bucket']=locale['ID'].map(speaker_counts.set_index('ID')['new_bucket'])
+    locale.loc[:, 'new_bucket'] = locale['ID'].map(speaker_counts.set_index('ID')['new_bucket'])
+    ### REASSIGN TEXT / DEV / TRAIN ###
+    print(locale.head())
 
 
-
-####                    ####
-#### CV_LOCAL_VALID.TSV ####
-####                    ####
-
-# cv_LANG_valid.csv == wav_filename,wav_filesize,transcript
-### don't use splits on cluster quite yet ###
-all_files = glob.glob(os.path.join(data_dir, LOCALE, "*_valid_*.csv"))
-print((str(i) for i in all_files))
-df_from_each_file = (pandas.read_csv(f) for f in all_files)
-validated_clips   = pandas.concat(df_from_each_file, ignore_index=True)
-# validated_clips = pandas.read_csv('{}/{}/cv_{}_valid.csv'.format(data_dir, LOCALE, LOCALE))
-### don't use splits on cluster quite yet ###
-print(validated_clips.head())
-
-# validated_clips = pandas.read_csv('{}/{}/cv_{}_valid.csv'.format(data_dir, LOCALE, LOCALE))
-validated_clips['path'] = validated_clips['wav_filename'].apply(ntpath.basename)
-validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\xa0', ' ') # kyrgyz
-validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\xad', ' ') # catalan
-validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\\', ' ') # welsh
-validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'„', ' ') # german
-validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'…', ' ') # german
-validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\x19', ' ') # turkish
-validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'�', ' ') # turkish
-validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\u202f', ' ') # french
-
-print(validated_clips.head())
+    locale.loc[:,'path'] = locale.loc[:,'path'].str.replace('/', '___')
+    locale.loc[:,'path'] = locale.loc[:,'path'].str.replace('mp3', 'wav')
+    dev_paths = locale[locale['new_bucket'] == 'dev'].loc[:, ['path']]
+    test_paths = locale[locale['new_bucket'] == 'test'].loc[:, ['path']]
+    train_paths = locale[locale['new_bucket'] == 'train'].loc[:, ['path']]
 
 
-####              ####
-#### EXTRACT SETS ####
-####              ####
 
-# produces a single column with a Bool for whether or not the validated clip is in dev / train / test
-dev_indices = validated_clips['path'].isin(dev_paths['path'])
-test_indices = validated_clips['path'].isin(test_paths['path'])
-train_indices = validated_clips['path'].isin(train_paths['path'])
-validated_clips['wav_filename'] =  data_dir + "/" + LOCALE + "/valid/" + validated_clips['path'].astype(str)
-validated_clips = validated_clips.drop(columns=['path'])
+    ####                    ####
+    #### CV_LOCAL_VALID.TSV ####
+    ####                    ####
+
+    # cv_LANG_valid.csv == wav_filename,wav_filesize,transcript
+    ### don't use splits on cluster quite yet ###
+    all_files = glob.glob(os.path.join(data_dir, LOCALE, "*_valid_*.csv"))
+    print((str(i) for i in all_files))
+    df_from_each_file = (pandas.read_csv(f) for f in all_files)
+    validated_clips   = pandas.concat(df_from_each_file, ignore_index=True)
+    # validated_clips = pandas.read_csv('{}/{}/cv_{}_valid.csv'.format(data_dir, LOCALE, LOCALE))
+    ### don't use splits on cluster quite yet ###
+    print(validated_clips.head())
+
+    # validated_clips = pandas.read_csv('{}/{}/cv_{}_valid.csv'.format(data_dir, LOCALE, LOCALE))
+    validated_clips['path'] = validated_clips['wav_filename'].apply(ntpath.basename)
+    validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\xa0', ' ') # kyrgyz
+    validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\xad', ' ') # catalan
+    validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\\', ' ') # welsh
+    validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'„', ' ') # german
+    validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'…', ' ') # german
+    validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\x19', ' ') # turkish
+    validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'�', ' ') # turkish
+    validated_clips['transcript'] =  validated_clips['transcript'].str.replace(u'\u202f', ' ') # french
+
+    print(validated_clips.head())
 
 
-print(validated_clips.head())
+    ####              ####
+    #### EXTRACT SETS ####
+    ####              ####
+
+    # produces a single column with a Bool for whether or not the validated clip is in dev / train / test
+    dev_indices = validated_clips['path'].isin(dev_paths['path'])
+    test_indices = validated_clips['path'].isin(test_paths['path'])
+    train_indices = validated_clips['path'].isin(train_paths['path'])
+    validated_clips['wav_filename'] =  data_dir + "/" + LOCALE + "/valid/" + validated_clips['path'].astype(str)
+    validated_clips = validated_clips.drop(columns=['path'])
 
 
-####              ####
-#### SAVE TO DISK ####
-####              ####
+    print(validated_clips.head())
 
-print("###############################################")
-print("FILTERED CLIPS FOR THE LANGUAGE: ", str(LOCALE))
-print("Num validated clips to be used in DEV: ", validated_clips[dev_indices]['wav_filename'].count())
-print("Num validated clips to be used in TEST: ", validated_clips[test_indices]['wav_filename'].count())
-print("Num validated clips to be used in TRAIN: ", validated_clips[train_indices]['wav_filename'].count())
-print("###############################################")
 
-validated_clips[dev_indices].to_csv(os.path.join(output_folder, 'valid_dev.csv'), index=False)
-validated_clips[test_indices].to_csv(os.path.join(output_folder, 'valid_test.csv'), index=False)
-validated_clips[train_indices].to_csv(os.path.join(output_folder, 'valid_train.csv'), index=False)
+    ####              ####
+    #### SAVE TO DISK ####
+    ####              ####
 
+    print("###############################################")
+    print("FILTERED CLIPS FOR THE LANGUAGE: ", str(LOCALE))
+    print("Num validated clips to be used in DEV: ", validated_clips[dev_indices]['wav_filename'].count())
+    print("Num validated clips to be used in TEST: ", validated_clips[test_indices]['wav_filename'].count())
+    print("Num validated clips to be used in TRAIN: ", validated_clips[train_indices]['wav_filename'].count())
+    print("###############################################")
+
+    validated_clips[dev_indices].to_csv(os.path.join(output_folder, 'valid_dev.csv'), index=False)
+    validated_clips[test_indices].to_csv(os.path.join(output_folder, 'valid_test.csv'), index=False)
+    validated_clips[train_indices].to_csv(os.path.join(output_folder, 'valid_train.csv'), index=False)
+
+    shared_train.append(validated_clips[train_indices][:385])
+    shared_dev.append(validated_clips[dev_indices][:34])
+
+
+shared_train = pandas.concat(shared_train)
+shared_train_path = os.path.join(output_folder, 'shared_train.csv')
+print('saving shared train with {} files to {}'.format(len(shared_train), shared_train_path))
+shared_train.to_csv(shared_train_path, index=False)
+
+shared_dev = pandas.concat(shared_dev)
+shared_dev_path = os.path.join(output_folder, 'shared_dev.csv')
+print('saving shared dev with {} files to {}'.format(len(shared_dev), shared_dev_path))
+shared_dev.to_csv(shared_dev_path, index=False)
