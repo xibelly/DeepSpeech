@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -xe
+
 transfer=1
 
 ## SETUP VIRETUALENV ##
@@ -21,3 +23,15 @@ if [ $transfer -eq 1 ]; then
     tar xvzf ${SOURCE_MODEL}/deepspeech-0.3.0-checkpoint.tar.gz --directory "${SOURCE_MODEL}"
     rm ${SOURCE_MODEL}/deepspeech-0.3.0-checkpoint.tar.gz
 fi
+
+pushd ../keep/urbansound8k
+unzip -o train.zip
+pushd Train
+for w in *.wav; do
+    sox "$w" --compression 0.0 --no-dither -e signed -L -c 1 -b 16 -r 16k -t wav "conv_$w"
+done
+popd
+popd
+
+cp ../src/train_ds.csv ../keep/urbansound8k/Train
+cp ../src/dev_ds.csv ../keep/urbansound8k/Train

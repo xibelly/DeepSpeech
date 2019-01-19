@@ -86,6 +86,7 @@ class WorkerJob(object):
         self.set_name = set_name
         self.steps = steps
         self.loss = -1
+        self.acc = -1
         self.samples = []
 
     def __str__(self):
@@ -176,12 +177,15 @@ class Epoch(object):
                     log_warn('%s - Number of steps not equal to number of jobs done.' % (self.name()))
 
                 agg_loss = 0.0
+                agg_acc = 0.0
 
                 for i in range(num_jobs):
                     job = jobs.pop(0)
                     agg_loss += job.loss
+                    agg_acc += job.acc
 
                 self.loss = agg_loss / num_jobs
+                self.acc = agg_acc / num_jobs
 
                 # if the job was for validation dataset then append it to the COORD's _loss for early stop verification
                 if (FLAGS.early_stop is True) and (self.set_name == 'dev'):
@@ -202,7 +206,7 @@ class Epoch(object):
         if not self.done():
             return self.job_status()
 
-        return '%s - loss: %f' % (self.name(), self.loss)
+        return '%s - loss: %f - acc: %f' % (self.name(), self.loss, self.acc)
 
 
 class TrainingCoordinator(object):

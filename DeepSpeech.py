@@ -10,6 +10,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = sys.argv[log_level_index] if log_level_inde
 
 import evaluate
 import numpy as np
+import pandas
 import progressbar
 import shutil
 import tempfile
@@ -51,7 +52,7 @@ def variable_on_worker_level(name, shape, initializer):
     return var
 
 
-def BiRNN(batch_x, seq_length, dropout, reuse=False, batch_size=None, n_steps=-1, previous_state=None, tflite=False):
+def BiRNN(batch_x, seq_length, dropout, drop_source_layers, reuse=False, batch_size=None, n_steps=-1, previous_state=None, tflite=False):
     r'''
     That done, we will define the learned variables, the weights and biases,
     within the method ``BiRNN()`` which also constructs the neural network.
@@ -91,6 +92,9 @@ def BiRNN(batch_x, seq_length, dropout, reuse=False, batch_size=None, n_steps=-1
         layer_1 = tf.nn.dropout(layer_1, (1.0 - dropout[0]))
         layers['layer_1'] = layer_1
 
+    if len(drop_source_layers) == 5:
+        return layer_1, layers
+
     # 2nd layer
     with tf.name_scope("LAYER_2"):
         b2 = variable_on_worker_level('b2', [Config.n_hidden_2], tf.zeros_initializer())
@@ -99,6 +103,9 @@ def BiRNN(batch_x, seq_length, dropout, reuse=False, batch_size=None, n_steps=-1
         layer_2 = tf.nn.dropout(layer_2, (1.0 - dropout[1]))
         layers['layer_2'] = layer_2
 
+    if len(drop_source_layers) == 4:
+        return layer_2, layers
+
     # 3rd layer
     with tf.name_scope("LAYER_3"):
         b3 = variable_on_worker_level('b3', [Config.n_hidden_3], tf.zeros_initializer())
@@ -106,6 +113,9 @@ def BiRNN(batch_x, seq_length, dropout, reuse=False, batch_size=None, n_steps=-1
         layer_3 = tf.minimum(tf.nn.relu(tf.add(tf.matmul(layer_2, h3), b3)), FLAGS.relu_clip)
         layer_3 = tf.nn.dropout(layer_3, (1.0 - dropout[2]))
         layers['layer_3'] = layer_3
+
+    if len(drop_source_layers) == 3:
+        return layer_3, layers
 
     # Now we create the forward and backward LSTM units.
     # Both of which have inputs of length `n_cell_dim` and bias `1.0` for the forget gate of the LSTM.
@@ -145,6 +155,9 @@ def BiRNN(batch_x, seq_length, dropout, reuse=False, batch_size=None, n_steps=-1
         layers['rnn_output'] = output
         layers['rnn_output_state'] = output_state
 
+    if len(drop_source_layers) == 2:
+        return output, layers
+
     # Now we feed `output` to the fifth hidden layer with clipped RELU activation and dropout
     with tf.name_scope("LAYER_5"):
         b5 = variable_on_worker_level('b5', [Config.n_hidden_5], tf.zeros_initializer())
@@ -152,6 +165,9 @@ def BiRNN(batch_x, seq_length, dropout, reuse=False, batch_size=None, n_steps=-1
         layer_5 = tf.minimum(tf.nn.relu(tf.add(tf.matmul(output, h5), b5)), FLAGS.relu_clip)
         layer_5 = tf.nn.dropout(layer_5, (1.0 - dropout[5]))
         layers['layer_5'] = layer_5
+
+    if len(drop_source_layers) == 1:
+        return layer_5, layers
 
     # Now we apply the weight matrix `h6` and bias `b6` to the output of `layer_5`
     # creating `n_classes` dimensional vectors, the logits.
@@ -181,7 +197,7 @@ def BiRNN(batch_x, seq_length, dropout, reuse=False, batch_size=None, n_steps=-1
 # Conveniently, this loss function is implemented in TensorFlow.
 # Thus, we can simply make use of this implementation to define our loss.
 
-def calculate_mean_edit_distance_and_loss(model_feeder, tower, dropout, reuse):
+def calculate_mean_edit_distance_and_loss(model_feeder, tower, dropout, drop_source_layers, reuse):
     r'''
     This routine beam search decodes a mini-batch and calculates the loss and mean edit distance.
     Next to total and average loss it returns the mean edit distance,
@@ -191,19 +207,43 @@ def calculate_mean_edit_distance_and_loss(model_feeder, tower, dropout, reuse):
     batch_x, batch_seq_len, batch_y = model_feeder.next_batch(tower)
 
     # Calculate the logits of the batch using BiRNN
-    logits, _ = BiRNN(batch_x, batch_seq_len, dropout, reuse)
+    logits, layers = BiRNN(batch_x, batch_seq_len, dropout, drop_source_layers, reuse)
+
+    output_layer_name = ['layer_1', 'layer_2', 'layer_3', 'rnn_output', 'layer_5', 'layer_6'][5-len(drop_source_layers)]
+
+    output = layers[output_layer_name]
+    batch_shape = tf.shape(batch_x)
+    batch_size = batch_shape[0]
+    n_steps = batch_shape[1]
+
+    with tf.variable_scope('dense'):
+        blast = variable_on_worker_level('bias', [1], tf.zeros_initializer())
+        hlast = variable_on_worker_level('weights', [Config.n_hidden if len(drop_source_layers) > 0 else Config.n_hidden_6, 1], tf.contrib.layers.xavier_initializer())
+        output = tf.nn.bias_add(tf.matmul(output, hlast), blast)
+
+    # permute time and batch
+    output = tf.reshape(output, [n_steps, batch_size, -1])
+    output = tf.transpose(output, [1, 0, 2])
+    output = tf.reshape(output, [batch_size, n_steps, -1])
+
+    # mean over time steps
+    output = tf.reduce_sum(output, axis=1) / tf.cast(batch_seq_len, tf.float32)
 
     # Compute the CTC loss using TensorFlow's `ctc_loss`
-    total_loss = tf.nn.ctc_loss(labels=batch_y,
-                                inputs=logits,
-                                sequence_length=batch_seq_len,
-                                ignore_longer_outputs_than_inputs=True)
+    total_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.cast(batch_y, tf.float32), logits=output)
+
+    output_probs = tf.sigmoid(output)
+    prediction = tf.cast(output_probs > 0.5, tf.int32)
+    eq = tf.cast(tf.equal(prediction, batch_y), tf.int32)
+    sum1 = tf.reduce_sum(eq)
+    sum2 = tf.reduce_sum(tf.ones_like(prediction))
+    accuracy = sum1 / sum2
 
     # Calculate the average loss across the batch
     avg_loss = tf.reduce_mean(total_loss)
 
     # Finally we return the average loss
-    return avg_loss
+    return avg_loss, accuracy
 
 
 # Adam Optimization
@@ -248,6 +288,8 @@ def get_tower_results(model_feeder, optimizer, dropout_rates, drop_source_layers
     # To calculate the mean of the losses
     tower_avg_losses = []
 
+    tower_avg_acc = []
+
     # Tower gradients to return
     tower_gradients = []
 
@@ -264,7 +306,7 @@ def get_tower_results(model_feeder, optimizer, dropout_rates, drop_source_layers
                 with tf.name_scope('tower_%d' % i) as scope:
                     # Calculate the avg_loss and mean_edit_distance and retrieve the decoded
                     # batch along with the original batch's labels (Y) of this tower
-                    avg_loss = calculate_mean_edit_distance_and_loss(model_feeder, i, dropout_rates, reuse=i>0)
+                    avg_loss, acc = calculate_mean_edit_distance_and_loss(model_feeder, i, dropout_rates, drop_source_layers, reuse=i>0)
 
                     # Allow for variables to be re-used by the next tower
                     tf.get_variable_scope().reuse_variables()
@@ -272,8 +314,10 @@ def get_tower_results(model_feeder, optimizer, dropout_rates, drop_source_layers
                     # Retain tower's avg losses
                     tower_avg_losses.append(avg_loss)
 
+                    tower_avg_acc.append(acc)
+
                     # # Compute gradients for model parameters using tower's mini-batch
-                    if drop_source_layers == 0:
+                    if len(drop_source_layers) == 0:
                         # train from scratch and update all layers
                         gradients = optimizer.compute_gradients(avg_loss)
                     elif FLAGS.fine_tune:
@@ -283,25 +327,21 @@ def get_tower_results(model_feeder, optimizer, dropout_rates, drop_source_layers
                     else:
                         # train from source model and freeze old layers
                         # aka - only update new layers
-                        gradients = optimizer.compute_gradients(
-                            avg_loss,
-                            var_list = [ v for v in tf.trainable_variables()
-                                         if any(
-                                                 layer in v.op.name
-                                                 for layer in drop_source_layers
-                                         )]
-                        )
+                        train_vars = [ v for v in tf.trainable_variables() if 'dense' in v.op.name]
+                        print('training vars:', [v.name for v in train_vars])
+                        gradients = optimizer.compute_gradients(avg_loss, var_list=train_vars)
 
                     # Retain tower's gradients
                     tower_gradients.append(gradients)
 
 
     avg_loss_across_towers = tf.reduce_mean(tower_avg_losses, 0)
+    avg_acc_across_towers = tf.reduce_mean(tower_avg_acc, 0)
 
     tf.summary.scalar(name='step_loss', tensor=avg_loss_across_towers, collections=['step_summaries'])
 
     # Return gradients and the average loss
-    return tower_gradients, avg_loss_across_towers
+    return tower_gradients, avg_loss_across_towers, avg_acc_across_towers
 
 
 def average_gradients(tower_gradients):
@@ -407,7 +447,7 @@ def train(server=None):
     #
 
     if FLAGS.drop_source_layers == 0:
-        drop_source_layers = 0
+        drop_source_layers = []
     else:
         drop_source_layers = ['2', '3', 'lstm', '5', '6'][-int(FLAGS.drop_source_layers):]
 
@@ -427,9 +467,12 @@ def train(server=None):
                             Config.n_input,
                             Config.n_context,
                             Config.alphabet,
-                            hdf5_cache_path=FLAGS.train_cached_features_path)
+                            hdf5_cache_path=FLAGS.train_cached_features_path,
+                            file_type='speech')
 
-    train_set = DataSet(train_data,
+    train_nonspeech = preprocess(FLAGS.train_nonspeech.split(','), FLAGS.train_batch_size, Config.n_input, Config.n_context, Config.alphabet, file_type='non-speech')
+
+    train_set = DataSet(pandas.concat((train_data, train_nonspeech)),
                         FLAGS.train_batch_size,
                         limit=FLAGS.limit_train,
                         next_index=lambda i: coord.get_next_index('train'))
@@ -440,9 +483,17 @@ def train(server=None):
                           Config.n_input,
                           Config.n_context,
                           Config.alphabet,
-                          hdf5_cache_path=FLAGS.dev_cached_features_path)
+                          hdf5_cache_path=FLAGS.dev_cached_features_path,
+                          file_type='speech')
 
-    dev_set = DataSet(dev_data,
+    dev_nonspeech = preprocess(FLAGS.dev_nonspeech.split(','),
+                               FLAGS.dev_batch_size,
+                               Config.n_input,
+                               Config.n_context,
+                               Config.alphabet,
+                               file_type='non-speech')
+
+    dev_set = DataSet(pandas.concat((dev_data, dev_nonspeech)),
                       FLAGS.dev_batch_size,
                       limit=FLAGS.limit_dev,
                       next_index=lambda i: coord.get_next_index('dev'))
@@ -465,7 +516,7 @@ def train(server=None):
                                                    total_num_replicas=FLAGS.replicas)
 
     # Get the data_set specific graph end-points
-    gradients, loss = get_tower_results(model_feeder, optimizer, dropout_rates, drop_source_layers)
+    gradients, loss, acc = get_tower_results(model_feeder, optimizer, dropout_rates, drop_source_layers)
 
     # Average tower gradients across GPUs
     avg_tower_gradients = average_gradients(gradients)
@@ -579,25 +630,29 @@ def train(server=None):
             print('Initializing from', FLAGS.source_model_checkpoint_dir)
             ckpt = tf.train.load_checkpoint(FLAGS.source_model_checkpoint_dir)
             variables = list(ckpt.get_variable_to_shape_map().keys())
+            print('variables in source ckpt:', variables)
+            print('global variables:', [v.op.name for v in tf.global_variables()])
             for v in tf.global_variables():
-                # TRAIN FROM SCRATCH
-                if drop_source_layers == 0:
-                    print('Loading', v.op.name)
-                    v.load(ckpt.get_tensor(v.op.name), session=session)
-                else:
-                    # TRAIN FROM SOURCE
-                    if not any(layer in v.op.name for layer in drop_source_layers):
+                if v.op.name in variables:
+                    # TRAIN FROM SCRATCH
+                    if len(drop_source_layers) == 0:
                         print('Loading', v.op.name)
                         v.load(ckpt.get_tensor(v.op.name), session=session)
+                    else:
+                        # TRAIN FROM SOURCE
+                        if not any('{}{}'.format(t, layer) in v.op.name for layer in drop_source_layers for t in ('h', 'b')):
+                            print('Loading', v.op.name)
+                            v.load(ckpt.get_tensor(v.op.name), session=session)
+                        else:
+                            print('Skipping', v.op.name)
 
-    if drop_source_layers == 0:
+    if len(drop_source_layers) == 0:
         init_op=tf.variables_initializer(tf.global_variables())
     else:
-        init_op=tf.variables_initializer(
-            [ v for v in tf.global_variables()
-              if any(layer in v.op.name
-                     for layer in drop_source_layers)
-            ])
+        init_vars = [ v for v in tf.global_variables() if 'dense' in v.op.name]
+        print('init vars:', [v.name for v in init_vars])
+        init_op=tf.variables_initializer(init_vars)
+
         
     scaffold = tf.train.Scaffold(init_op, init_fn=init_fn)
     ### TRANSFER LEARNING ###
@@ -654,6 +709,7 @@ def train(server=None):
 
                     # Initialize loss aggregator
                     total_loss = 0.0
+                    total_acc = 0.0
 
                     # Setting the training operation in case of training requested
                     train_op = apply_gradient_op if is_train else []
@@ -670,7 +726,7 @@ def train(server=None):
 
                         log_debug('Starting batch...')
                         # Compute the batch
-                        _, current_step, batch_loss, step_summary = session.run([train_op, global_step, loss, step_summaries_op], **extra_params)
+                        _, current_step, batch_loss, batch_acc, step_summary = session.run([train_op, global_step, loss, acc, step_summaries_op], **extra_params)
 
                         # Log step summaries
                         step_summary_writer.add_summary(step_summary, current_step)
@@ -680,9 +736,11 @@ def train(server=None):
 
                         # Add batch to loss
                         total_loss += batch_loss
+                        total_acc += batch_acc
 
                     # Gathering job results
                     job.loss = total_loss / job.steps
+                    job.acc = total_acc / job.steps
 
                     # Display progressbar
                     if FLAGS.show_progressbar:
