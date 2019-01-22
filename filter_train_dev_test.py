@@ -62,10 +62,12 @@ print("### Total valid+invalid clips per lang ###")
 print(clips['locale'].value_counts())
 print("############################")
 
-shared_train = []
-shared_dev = []
+en_train = None
+de_train = None
+en_dev = None
+de_dev = None
 
-for LOCALE in ['br', 'ca', 'cv', 'cy', 'de', 'en', 'fr', 'ga-IE', 'it', 'kab', 'sl', 'tr', 'tt']:
+for LOCALE in ['de', 'en']:
     # pull out data for just one language
     locale = clips[clips['locale'] == LOCALE]
 
@@ -160,16 +162,25 @@ for LOCALE in ['br', 'ca', 'cv', 'cy', 'de', 'en', 'fr', 'ga-IE', 'it', 'kab', '
     validated_clips[test_indices].to_csv(os.path.join(output_folder, 'valid_test.csv'), index=False)
     validated_clips[train_indices].to_csv(os.path.join(output_folder, 'valid_train.csv'), index=False)
 
-    shared_train.append(validated_clips[train_indices][:385])
-    shared_dev.append(validated_clips[dev_indices][:34])
+    if LOCALE == 'en':
+        en_train = validated_clips[train_indices][:5000]
+        en_dev = validated_clips[dev_indices][:500]
+    elif LOCALE == 'de':
+        de_train = validated_clips[train_indices][:5000]
+        de_dev = validated_clips[dev_indices][:500]
 
+en_train_path = os.path.join(output_folder, 'a_en_train.csv')
+print('saving en train with {} files to {}'.format(len(en_train), en_train_path))
+en_train.to_csv(en_train_path, index=False)
 
-shared_train = pandas.concat(shared_train)
-shared_train_path = os.path.join(output_folder, 'shared_train.csv')
-print('saving shared train with {} files to {}'.format(len(shared_train), shared_train_path))
-shared_train.to_csv(shared_train_path, index=False)
+en_dev_path = os.path.join(output_folder, 'a_en_dev.csv')
+print('saving en dev with {} files to {}'.format(len(en_dev), en_dev_path))
+en_dev.to_csv(en_dev_path, index=False)
 
-shared_dev = pandas.concat(shared_dev)
-shared_dev_path = os.path.join(output_folder, 'shared_dev.csv')
-print('saving shared dev with {} files to {}'.format(len(shared_dev), shared_dev_path))
-shared_dev.to_csv(shared_dev_path, index=False)
+de_train_path = os.path.join(output_folder, 'a_de_train.csv')
+print('saving de train with {} files to {}'.format(len(de_train), de_train_path))
+de_train.to_csv(de_train_path, index=False)
+
+de_dev_path = os.path.join(output_folder, 'a_de_dev.csv')
+print('saving de dev with {} files to {}'.format(len(de_dev), de_dev_path))
+de_dev.to_csv(de_dev_path, index=False)

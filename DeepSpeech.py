@@ -16,6 +16,7 @@ import shutil
 import tempfile
 import tensorflow as tf
 import traceback
+from scipy import stats
 
 from ds_ctcdecoder import ctc_beam_search_decoder, Scorer
 from six.moves import zip, range
@@ -219,7 +220,7 @@ def calculate_mean_edit_distance_and_loss(model_feeder, tower, dropout, drop_sou
     with tf.variable_scope('dense'):
         blast = variable_on_worker_level('bias', [1], tf.zeros_initializer())
         hlast = variable_on_worker_level('weights', [Config.n_hidden if len(drop_source_layers) > 0 else Config.n_hidden_6, 1], tf.contrib.layers.xavier_initializer())
-        output = tf.sigmoid(tf.nn.bias_add(tf.matmul(output, hlast), blast))
+        output = tf.nn.bias_add(tf.matmul(output, hlast), blast)
 
     # permute time and batch
     output = tf.reshape(output, [n_steps, batch_size, -1])
@@ -229,10 +230,10 @@ def calculate_mean_edit_distance_and_loss(model_feeder, tower, dropout, drop_sou
     # mean over time steps
     output = tf.reduce_sum(output, axis=1) / tf.cast(batch_seq_len, tf.float32)
 
-    # Compute the CTC loss using TensorFlow's `ctc_loss`
     total_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.cast(batch_y, tf.float32), logits=output)
 
-    prediction = tf.cast(output > 0.5, tf.int32)
+    output_probs = tf.sigmoid(output)
+    prediction = tf.cast(output_probs > 0.5, tf.int32)
     eq = tf.cast(tf.equal(prediction, batch_y), tf.int32)
     sum1 = tf.reduce_sum(eq)
     sum2 = tf.reduce_sum(tf.ones_like(prediction))
@@ -622,6 +623,7 @@ def train(server=None):
 
     # Initialize update_progressbar()'s child fields to safe values
     update_progressbar.pbar = None
+
 
     ### TRANSFER LEARNING ###
     def init_fn(scaffold, session):

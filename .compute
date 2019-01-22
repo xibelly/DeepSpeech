@@ -105,14 +105,14 @@ for num_layers_dropped in 0 1 2 3 4 5; do
     CUDA_VISIBLE_DEVICES="0" \
     python3 -u DeepSpeech.py \
 	        --summary_dir "${exp}/summaries/" \
-	        --checkpoint_dir "${exp}/ckpt/" \
+	        --checkpoint_dir "${exp}/ckpt" \
 	        --test_output_file "${exp}/RESULTS.json" \
 	        --drop_source_layers "${num_layers_dropped}" \
 	        --source_model_checkpoint_dir "../keep/${source_model}" \
-	        --train_files "${data}/shared_train.csv"\
-            --train_nonspeech "../keep/urbansound8k/Train/train_ds.csv" \
-            --dev_files "${data}/shared_dev.csv" \
-            --dev_nonspeech "../keep/urbansound8k/Train/dev_ds.csv" \
+            --train_files "${data}/a_en_train.csv"\
+	        --train_nonspeech "${data}/a_de_train.csv"\
+            --dev_files "${data}/a_en_dev.csv" \
+            --dev_nonspeech "${data}/a_de_dev.csv" \
 	        --test_files "${data}/valid_test.csv" \
             --notest \
 	        --n_hidden 2048 \
