@@ -21,22 +21,22 @@ from util.flags import create_flags, FLAGS
 from util.logging import log_error, log_progress, create_progressbar
 
 
-def sparse_tensor_value_to_texts(value, alphabet):
+def sparse_tensor_value_to_texts(value):
     r"""
     Given a :class:`tf.SparseTensor` ``value``, return an array of Python strings
-    representing its values, converting tokens to strings using ``alphabet``.
+    representing its values, converting tokens to strings.
     """
-    return sparse_tuple_to_texts((value.indices, value.values, value.dense_shape), alphabet)
+    return sparse_tuple_to_texts((value.indices, value.values, value.dense_shape))
 
 
-def sparse_tuple_to_texts(sp_tuple, alphabet):
-    indices = sp_tuple[0]
-    values = sp_tuple[1]
-    results = [''] * sp_tuple[2][0]
-    for i, index in enumerate(indices):
-        results[index[0]] += alphabet.string_from_label(values[i])
+def sparse_tuple_to_texts(sp_tuple):
+    indices, values, shape = sp_tuple
+    results = [bytearray() for _ in range(shape[0])]
+    for i in range(len(indices)):
+        index = indices[i][0]
+        results[index].append(values[i])
     # List of strings
-    return results
+    return [res.decode('utf-8', 'replace') for res in results]
 
 
 def evaluate(test_csvs, create_model, try_loading):
