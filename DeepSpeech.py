@@ -77,14 +77,49 @@ def dense(name, x, units, dropout_rate=None, relu=True):
     return output
 
 
-def rnn_impl_lstmblockfusedcell(x, seq_length, previous_state, reuse):
+def rnn_impl_cudnn_rnn(x, seq_length, previous_state, _):
+    assert previous_state is None # 'Passing previous state not supported with CuDNN backend'
+
+    if FLAGS.rnn_cell == 'lstm':
+        cell_type = tf.contrib.cudnn_rnn.CudnnLSTM
+    elif FLAGS.rnn_cell == 'gru':
+        cell_type = tf.contrib.cudnn_rnn.CudnnGRU
+    else:
+        log_error('Invalid RNN cell type: {}'.format(FLAGS.rnn_cell))
+
     # Forward direction cell:
-    fw_cell = tf.contrib.rnn.LSTMBlockFusedCell(Config.n_cell_dim, reuse=reuse)
+    fw_cell = cell_type(num_layers=FLAGS.n_layers,
+                        num_units=Config.n_cell_dim,
+                        input_mode='linear_input',
+                        direction='unidirectional',
+                        dtype=tf.float32)
 
     output, output_state = fw_cell(inputs=x,
-                                   dtype=tf.float32,
-                                   sequence_length=seq_length,
-                                   initial_state=previous_state)
+                                   sequence_lengths=seq_length)
+
+    return output, output_state
+
+
+def rnn_impl_dynamic_rnn(x, seq_length, previous_state, reuse):
+    if FLAGS.rnn_cell == 'lstm':
+        cell_type = tf.contrib.cudnn_rnn.CudnnCompatibleLSTMCell
+    elif FLAGS.rnn_cell == 'gru':
+        cell_type = tf.contrib.cudnn_rnn.CudnnCompatibleGRUCell
+    else:
+        log_error('Invalid RNN cell type: {}'.format(FLAGS.rnn_cell))
+
+    with tf.variable_scope('cudnn_lstm'):
+        # Forward direction cell:
+        def cell():
+            return cell_type(Config.n_cell_dim, reuse=reuse)
+        fw_cell = tf.nn.rnn_cell.MultiRNNCell([cell() for _ in range(FLAGS.n_layers)])
+
+        output, output_state = tf.nn.dynamic_rnn(cell=fw_cell,
+                                                 inputs=x,
+                                                 sequence_length=seq_length,
+                                                 initial_state=previous_state,
+                                                 dtype=tf.float32,
+                                                 time_major=True)
 
     return output, output_state
 
@@ -108,7 +143,7 @@ def rnn_impl_static_rnn(x, seq_length, previous_state, reuse):
     return output, output_state
 
 
-def create_model(batch_x, seq_length, dropout, reuse=False, previous_state=None, overlap=True, rnn_impl=rnn_impl_lstmblockfusedcell):
+def create_model(batch_x, seq_length, dropout, reuse=False, previous_state=None, overlap=True, rnn_impl=rnn_impl_dynamic_rnn):
     layers = {}
 
     # Input shape: [batch_size, n_steps, n_input + 2*n_input*n_context]
@@ -159,6 +194,17 @@ def create_model(batch_x, seq_length, dropout, reuse=False, previous_state=None,
     layer_6 = tf.reshape(layer_6, [-1, batch_size, Config.n_hidden_6], name='raw_logits')
     layers['raw_logits'] = layer_6
 
+    total_parameters = 0
+    for variable in tf.trainable_variables():
+        # shape is an array of tf.Dimension
+        shape = variable.get_shape()
+        variable_parameters = 1
+        for dim in shape:
+            variable_parameters *= dim.value
+        total_parameters += variable_parameters
+    print('PARAMS:', total_parameters)
+    # exit(0)
+
     # Output shape: [n_steps, batch_size, n_hidden_6]
     return layer_6, layers
 
@@ -182,8 +228,13 @@ def calculate_mean_edit_distance_and_loss(iterator, dropout, reuse):
     # Obtain the next batch of data
     (batch_x, batch_seq_len), batch_y = iterator.get_next()
 
+    if FLAGS.use_cudnn_rnn:
+        rnn_impl = rnn_impl_cudnn_rnn
+    else:
+        rnn_impl = rnn_impl_dynamic_rnn
+
     # Calculate the logits of the batch
-    logits, _ = create_model(batch_x, batch_seq_len, dropout, reuse=reuse)
+    logits, _ = create_model(batch_x, batch_seq_len, dropout, reuse=reuse, rnn_impl=rnn_impl)
 
     # Compute the CTC loss using TensorFlow's `ctc_loss`
     total_loss = tf.nn.ctc_loss(labels=batch_y, inputs=logits, sequence_length=batch_seq_len)
@@ -589,7 +640,7 @@ def create_inference_graph(batch_size=1, n_steps=16, tflite=False):
     if tflite:
         rnn_impl = rnn_impl_static_rnn
     else:
-        rnn_impl = rnn_impl_lstmblockfusedcell
+        rnn_impl = rnn_impl_dynamic_rnn
 
     logits, layers = create_model(batch_x=input_tensor,
                                   seq_length=seq_length if FLAGS.use_seq_length else None,
@@ -683,12 +734,21 @@ def export():
     output_names = ",".join(output_names_tensors + output_names_ops)
 
     if not FLAGS.export_tflite:
-        mapping = {v.op.name: v for v in tf.global_variables() if not v.op.name.startswith('previous_state_')}
+        # Create a saver using variables from the above newly created graph
+        if FLAGS.use_cudnn_rnn:
+            def fixup(name):
+                if name.startswith('rnn/lstm_cell/'):
+                    return name.replace('rnn/lstm_cell/', 'rnn/cudnn_compatible_lstm_cell/')
+                return name
+
+            mapping = {fixup(v.op.name): v for v in tf.global_variables() if not v.op.name.startswith('previous_state_')}
+        else:
+            mapping = {v.op.name: v for v in tf.global_variables() if not v.op.name.startswith('previous_state_')}
     else:
         # Create a saver using variables from the above newly created graph
         def fixup(name):
             if name.startswith('rnn/lstm_cell/'):
-                return name.replace('rnn/lstm_cell/', 'lstm_fused_cell/')
+                return name.replace('rnn/lstm_cell/', 'rnn/cudnn_compatible_lstm_cell/')
             return name
 
         mapping = {fixup(v.op.name): v for v in tf.global_variables()}
