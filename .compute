@@ -27,18 +27,17 @@ python3 -u DeepSpeech.py \
   --dev_files "${lbs}-dev-clean.csv"\
   --test_files "${lbs}-test-clean.csv" \
   --train_batch_size 64 \
-  --dev_batch_size 256 \
+  --dev_batch_size 64 \
   --test_batch_size 256 \
-  --n_hidden 2048 \
-  --learning_rate 0.0001 \
-  --dropout_rate 0.2 \
-  --epoch 3 \
-  --n_layers 1 \
-  --rnn_cell "lstm" \
+  --n_hidden 1536 \
+  --learning_rate 0.001 \
+  --epoch 30 \
+  --n_layers 3 \
+  --rnn_cell "gru" \
   --noearly_stop \
   --checkpoint_dir "/dotdot/ckpt" \
   --summary_dir "/dotdot/summaries" \
   --train_cached_features_path "/dotdot/fis-swb-lbs" \
   --use_cudnn_rnn
 
-# cp -R /dotdot/* ../keep
+cp -R /dotdot/* ../keep
