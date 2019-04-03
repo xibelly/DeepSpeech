@@ -61,17 +61,19 @@ def create_overlapping_windows(batch_x):
     return batch_x
 
 
-def dense(name, x, units, dropout_rate=None, relu=True):
+def relu_clip(x):
+    return tf.minimum(tf.nn.relu(x), FLAGS.relu_clip)
+
+
+def dense(name, x, units, dropout_rate=None, relu=True, layer_norm=True):
     with tf.variable_scope(name):
-        bias = variable_on_cpu('bias', [units], tf.zeros_initializer())
-        weights = variable_on_cpu('weights', [x.shape[-1], units], tf.contrib.layers.xavier_initializer())
+        activation = relu_clip if relu else None
+        normalizer = tf.contrib.layers.layer_norm if layer_norm else None
+        output = tf.contrib.layers.fully_connected(x, units,
+                                                   activation_fn=activation,
+                                                   normalizer_fn=normalizer)
 
-    output = tf.nn.bias_add(tf.matmul(x, weights), bias)
-
-    if relu:
-        output = tf.minimum(tf.nn.relu(output), FLAGS.relu_clip)
-
-    if dropout_rate is not None:
+    if not layer_norm and dropout_rate is not None:
         output = tf.nn.dropout(output, rate=dropout_rate)
 
     return output
@@ -94,8 +96,7 @@ def rnn_impl_cudnn_rnn(x, seq_length, previous_state, _):
                         direction='unidirectional',
                         dtype=tf.float32)
 
-    output, output_state = fw_cell(inputs=x,
-                                   sequence_lengths=seq_length)
+    output, output_state = fw_cell(x, sequence_lengths=seq_length)
 
     return output, output_state
 
@@ -143,70 +144,49 @@ def rnn_impl_static_rnn(x, seq_length, previous_state, reuse):
     return output, output_state
 
 
-def create_model(batch_x, seq_length, dropout, reuse=False, previous_state=None, overlap=True, rnn_impl=rnn_impl_dynamic_rnn):
+def create_model(x, seq_length, dropout, reuse=False, previous_state=None, overlap=True, rnn_impl=rnn_impl_dynamic_rnn):
     layers = {}
 
-    # Input shape: [batch_size, n_steps, n_input + 2*n_input*n_context]
-    batch_size = tf.shape(batch_x)[0]
+    # Input shape: [batch_size, n_steps, 2*n_context+1, n_input]
+    batch_size = tf.shape(x)[0]
+    n_steps = tf.shape(x)[1]
+    features_per_timestep = (2 * Config.n_context + 1) * Config.n_input
 
     # Create overlapping feature windows if needed
     if overlap:
-        batch_x = create_overlapping_windows(batch_x)
+        x = create_overlapping_windows(x)
 
-    # Reshaping `batch_x` to a tensor with shape `[n_steps*batch_size, n_input + 2*n_input*n_context]`.
-    # This is done to prepare the batch for input into the first layer which expects a tensor of rank `2`.
+    # Transpose `x` into time major and flatten feature dimensions
+    x = tf.transpose(x, [1, 0, 2, 3])
+    x = tf.reshape(x, [n_steps, batch_size, features_per_timestep])
+    layers['input_reshaped'] = x
 
-    # Permute n_steps and batch_size
-    batch_x = tf.transpose(batch_x, [1, 0, 2, 3])
-    # Reshape to prepare input for first layer
-    batch_x = tf.reshape(batch_x, [-1, Config.n_input + 2*Config.n_input*Config.n_context]) # (n_steps*batch_size, n_input + 2*n_input*n_context)
-    layers['input_reshaped'] = batch_x
+    layers['layer_1'] = x = dense('layer_1', x, Config.n_hidden_1, dropout_rate=dropout[0])
+    layers['layer_2'] = x = dense('layer_2', x, Config.n_hidden_2, dropout_rate=dropout[1])
+    layers['layer_3'] = x = dense('layer_3', x, Config.n_hidden_3, dropout_rate=dropout[2])
 
-    # The next three blocks will pass `batch_x` through three hidden layers with
-    # clipped RELU activation and dropout.
-    layers['layer_1'] = layer_1 = dense('layer_1', batch_x, Config.n_hidden_1, dropout_rate=dropout[0])
-    layers['layer_2'] = layer_2 = dense('layer_2', layer_1, Config.n_hidden_2, dropout_rate=dropout[1])
-    layers['layer_3'] = layer_3 = dense('layer_3', layer_2, Config.n_hidden_3, dropout_rate=dropout[2])
-
-    # `layer_3` is now reshaped into `[n_steps, batch_size, 2*n_cell_dim]`,
-    # as the LSTM RNN expects its input to be of shape `[max_time, batch_size, input_size]`.
-    layer_3 = tf.reshape(layer_3, [-1, batch_size, Config.n_hidden_3])
-
-    # Run through parametrized RNN implementation, as we use different RNNs
-    # for training and inference
-    output, output_state = rnn_impl(layer_3, seq_length, previous_state, reuse)
-
-    # Reshape output from a tensor of shape [n_steps, batch_size, n_cell_dim]
-    # to a tensor of shape [n_steps*batch_size, n_cell_dim]
-    output = tf.reshape(output, [-1, Config.n_cell_dim])
-    layers['rnn_output'] = output
+    # Run through RNN implementation
+    x, output_state = rnn_impl(x, seq_length, previous_state, reuse)
+    layers['rnn_output'] = x
     layers['rnn_output_state'] = output_state
 
-    # Now we feed `output` to the fifth hidden layer with clipped RELU activation
-    layers['layer_5'] = layer_5 = dense('layer_5', output, Config.n_hidden_5, dropout_rate=dropout[5])
+    layers['layer_5'] = x = dense('layer_5', x, Config.n_hidden_5, dropout_rate=dropout[5])
+    layers['layer_6'] = x = dense('layer_6', x, Config.n_hidden_6, relu=False)
+    layers['raw_logits'] = x
 
-    # Now we apply a final linear layer creating `n_classes` dimensional vectors, the logits.
-    layers['layer_6'] = layer_6 = dense('layer_6', layer_5, Config.n_hidden_6, relu=False)
-
-    # Finally we reshape layer_6 from a tensor of shape [n_steps*batch_size, n_hidden_6]
-    # to the slightly more useful shape [n_steps, batch_size, n_hidden_6].
-    # Note, that this differs from the input in that it is time-major.
-    layer_6 = tf.reshape(layer_6, [-1, batch_size, Config.n_hidden_6], name='raw_logits')
-    layers['raw_logits'] = layer_6
-
-    total_parameters = 0
-    for variable in tf.trainable_variables():
-        # shape is an array of tf.Dimension
-        shape = variable.get_shape()
-        variable_parameters = 1
-        for dim in shape:
-            variable_parameters *= dim.value
-        total_parameters += variable_parameters
-    print('PARAMS:', total_parameters)
+    # total_parameters = 0
+    # for variable in tf.trainable_variables():
+    #     # shape is an array of tf.Dimension
+    #     shape = variable.get_shape()
+    #     variable_parameters = 1
+    #     for dim in shape:
+    #         variable_parameters *= dim.value
+    #     total_parameters += variable_parameters
+    # print('PARAMS:', total_parameters)
     # exit(0)
 
     # Output shape: [n_steps, batch_size, n_hidden_6]
-    return layer_6, layers
+    return x, layers
 
 
 # Accuracy and Loss
@@ -240,7 +220,8 @@ def calculate_mean_edit_distance_and_loss(iterator, dropout, reuse):
     total_loss = tf.nn.ctc_loss(labels=batch_y, inputs=logits, sequence_length=batch_seq_len)
 
     # Calculate the average loss across the batch
-    avg_loss = tf.reduce_mean(tf.boolean_mask(total_loss, tf.math.is_finite(total_loss)))
+    # avg_loss = tf.reduce_mean(tf.boolean_mask(total_loss, tf.math.is_finite(total_loss)))
+    avg_loss = tf.reduce_mean(total_loss)
 
     # Finally we return the average loss
     return avg_loss
@@ -642,7 +623,7 @@ def create_inference_graph(batch_size=1, n_steps=16, tflite=False):
     else:
         rnn_impl = rnn_impl_dynamic_rnn
 
-    logits, layers = create_model(batch_x=input_tensor,
+    logits, layers = create_model(input_tensor,
                                   seq_length=seq_length if FLAGS.use_seq_length else None,
                                   dropout=no_dropout,
                                   previous_state=previous_state,
