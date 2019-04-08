@@ -189,7 +189,7 @@ def calculate_mean_edit_distance_and_loss(iterator, dropout, reuse):
     total_loss = tf.nn.ctc_loss(labels=batch_y, inputs=logits, sequence_length=batch_seq_len)
 
     # Calculate the average loss across the batch
-    avg_loss = tf.reduce_mean(total_loss)
+    avg_loss = tf.reduce_mean(tf.boolean_mask(total_loss, tf.math.is_finite(total_loss)))
 
     # Finally we return the average loss
     return avg_loss

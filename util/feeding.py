@@ -90,6 +90,10 @@ def create_dataset(csvs, batch_size, cache_path=''):
 
     num_gpus = len(Config.available_devices)
 
+    def has_non_ascii(_, sp_tuple):
+        indices, values, shape = sp_tuple
+        return tf.reduce_any(values > 127)
+
     dataset = (tf.data.Dataset.from_generator(generate_values,
                                               output_types=(tf.string, (tf.int64, tf.int32, tf.int64)))
                               .map(entry_to_features, num_parallel_calls=tf.data.experimental.AUTOTUNE)
