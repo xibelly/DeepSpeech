@@ -93,6 +93,8 @@ def create_flags():
     # Geometry
 
     f.DEFINE_integer('n_hidden', 2048, 'layer width to use when initialising layers')
+    f.DEFINE_integer('n_layers', 1, 'number of recurrent layers')
+    f.DEFINE_string('rnn_cell', 'lstm', 'recurrent cell type, "lstm" or "gru"')
 
     # Initialization
 
