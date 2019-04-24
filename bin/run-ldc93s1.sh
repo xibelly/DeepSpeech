@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/bin/bash
+
 set -xe
 if [ ! -f DeepSpeech.py ]; then
     echo "Please make sure you run this from DeepSpeech's top level directory."
@@ -20,6 +21,7 @@ fi
 # and when trying to run on multiple devices (like GPUs), this will break
 export CUDA_VISIBLE_DEVICES=0
 
+read -d '' cmdline << EOF || true
 python -u DeepSpeech.py --noshow_progressbar \
   --train_files data/ldc93s1/ldc93s1.csv \
   --test_files data/ldc93s1/ldc93s1.csv \
@@ -28,4 +30,9 @@ python -u DeepSpeech.py --noshow_progressbar \
   --n_hidden 100 \
   --epochs 200 \
   --checkpoint_dir "$checkpoint_dir" \
-  "$@"
+  $@ ; rm /tmp/runlog
+EOF
+
+tmux new-session -d "$cmdline" \; pipe-pane 'cat > /tmp/runlog'
+sleep 3
+tail --follow=name /tmp/runlog

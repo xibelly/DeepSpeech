@@ -89,16 +89,18 @@ def rnn_impl_cudnn_rnn(x, seq_length, previous_state, _):
     else:
         log_error('Invalid RNN cell type: {}'.format(FLAGS.rnn_cell))
 
-    # Forward direction cell:
-    fw_cell = cell_type(num_layers=FLAGS.n_layers,
-                        num_units=Config.n_cell_dim,
-                        input_mode='linear_input',
-                        direction='unidirectional',
-                        dtype=tf.float32)
+    if rnn_impl_cudnn_rnn.model is None:
+        rnn_impl_cudnn_rnn.model = cell_type(num_layers=FLAGS.n_layers,
+                                             num_units=Config.n_cell_dim,
+                                             input_mode='linear_input',
+                                             direction='unidirectional',
+                                             dtype=tf.float32)
 
-    output, output_state = fw_cell(x, sequence_lengths=seq_length)
+    output, output_state = rnn_impl_cudnn_rnn.model(x, sequence_lengths=seq_length)
 
     return output, output_state
+
+rnn_impl_cudnn_rnn.model = None
 
 
 def rnn_impl_dynamic_rnn(x, seq_length, previous_state, reuse):
@@ -161,17 +163,17 @@ def create_model(x, seq_length, dropout, reuse=False, previous_state=None, overl
     x = tf.reshape(x, [n_steps, batch_size, features_per_timestep])
     layers['input_reshaped'] = x
 
-    layers['layer_1'] = x = dense('layer_1', x, Config.n_hidden_1, dropout_rate=dropout[0])
-    layers['layer_2'] = x = dense('layer_2', x, Config.n_hidden_2, dropout_rate=dropout[1])
-    layers['layer_3'] = x = dense('layer_3', x, Config.n_hidden_3, dropout_rate=dropout[2])
+    layers['layer_1'] = x = dense('layer_1', x, Config.n_hidden_1, dropout_rate=dropout[0], layer_norm=FLAGS.layer_norm)
+    layers['layer_2'] = x = dense('layer_2', x, Config.n_hidden_2, dropout_rate=dropout[1], layer_norm=FLAGS.layer_norm)
+    layers['layer_3'] = x = dense('layer_3', x, Config.n_hidden_3, dropout_rate=dropout[2], layer_norm=FLAGS.layer_norm)
 
     # Run through RNN implementation
     x, output_state = rnn_impl(x, seq_length, previous_state, reuse)
     layers['rnn_output'] = x
     layers['rnn_output_state'] = output_state
 
-    layers['layer_5'] = x = dense('layer_5', x, Config.n_hidden_5, dropout_rate=dropout[5])
-    layers['layer_6'] = x = dense('layer_6', x, Config.n_hidden_6, relu=False)
+    layers['layer_5'] = x = dense('layer_5', x, Config.n_hidden_5, dropout_rate=dropout[5], layer_norm=FLAGS.layer_norm)
+    layers['layer_6'] = x = dense('layer_6', x, Config.n_hidden_6, relu=False, layer_norm=FLAGS.layer_norm)
     layers['raw_logits'] = x
 
     # total_parameters = 0
@@ -220,8 +222,7 @@ def calculate_mean_edit_distance_and_loss(iterator, dropout, reuse):
     total_loss = tf.nn.ctc_loss(labels=batch_y, inputs=logits, sequence_length=batch_seq_len)
 
     # Calculate the average loss across the batch
-    # avg_loss = tf.reduce_mean(tf.boolean_mask(total_loss, tf.math.is_finite(total_loss)))
-    avg_loss = tf.reduce_mean(total_loss)
+    avg_loss = tf.reduce_mean(tf.boolean_mask(total_loss, tf.math.is_finite(total_loss)))
 
     # Finally we return the average loss
     return avg_loss
@@ -272,7 +273,9 @@ def get_tower_results(iterator, optimizer, dropout_rates):
     # Tower gradients to return
     tower_gradients = []
 
-    with tf.variable_scope(tf.get_variable_scope()):
+
+
+    with tf.variable_scope(tf.get_variable_scope()) as scope:
         # Loop over available_devices
         for i in range(len(Config.available_devices)):
             # Execute operations of tower i on device i
@@ -285,7 +288,7 @@ def get_tower_results(iterator, optimizer, dropout_rates):
                     avg_loss = calculate_mean_edit_distance_and_loss(iterator, dropout_rates, reuse=i > 0)
 
                     # Allow for variables to be re-used by the next tower
-                    tf.get_variable_scope().reuse_variables()
+                    scope.reuse_variables()
 
                     # Retain tower's avg losses
                     tower_avg_losses.append(avg_loss)

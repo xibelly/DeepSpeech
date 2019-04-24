@@ -12,6 +12,8 @@ wikide="${data}/wikipedia/de/wiki.txt"
 
 srcdir=`pwd`/../src
 
+apt-get install -y tmux
+
 # apt-get install -y build-essential cmake libboost-all-dev zlib1g-dev libbz2-dev liblzma-dev openjdk-8-jdk bash-completion unzip
 
 # mkdir -p /tmp/tf
@@ -94,7 +96,8 @@ srcdir=`pwd`/../src
 
 pip3 install wheel
 pip3 install -r <(grep -v tensorflow requirements.txt)
-pip3 install tensorflow-gpu==1.13.1
+# pip3 install tensorflow-gpu==1.13.1
+pip3 install tf-nightly-gpu
 
 # # Build ds_ctcdecoder
 # pushd ../src/native_client/ctcdecode
@@ -109,22 +112,29 @@ lm_trie=${USER_DIR}/wikide_lm/wikide.trie
 
 pip3 install ${USER_DIR}/decoder_utf8/*.whl
 
+read -d '' cmdline << EOF || true
 python3 -u DeepSpeech.py \
   --train_files "${USER_DIR}/de_csv/train.csv" \
   --train_cached_features_path "${USER_DIR}/cv2-de-train-cache/train-cache" \
   --dev_files "${USER_DIR}/de_csv/dev.csv" \
   --test_files "${USER_DIR}/de_csv/test.csv" \
-  --train_batch_size 24 \
-  --dev_batch_size 48 \
-  --test_batch_size 48 \
+  --train_batch_size 192 \
+  --dev_batch_size 256 \
+  --test_batch_size 256 \
   --n_hidden 1024 \
-  --learning_rate 0.0001 \
-  --dropout_rate 0.2 \
+  --learning_rate 0.001 \
+  --dropout_rate 0.5 \
   --epochs 40 \
   --load "auto" \
   --noearly_stop \
   --checkpoint_dir "../keep" \
   --summary_dir "../keep/summaries" \
   --lm_binary_path "${lm_binary}" \
-  --lm_trie_path "${lm_trie}"
+  --lm_trie_path "${lm_trie}" \
+  --use_cudnn_rnn \
+  --layer_norm ; rm /tmp/runlog
+EOF
 
+tmux new-session -d "$cmdline" \; pipe-pane 'cat > /tmp/runlog'
+sleep 3
+tail --follow=name /tmp/runlog
