@@ -28,17 +28,16 @@ def sparse_tensor_value_to_texts(value, alphabet):
     Given a :class:`tf.SparseTensor` ``value``, return an array of Python strings
     representing its values, converting tokens to strings using ``alphabet``.
     """
-    return sparse_tuple_to_texts((value.indices, value.values, value.dense_shape), alphabet)
+    return sparse_tuple_to_texts((value.indices, value.values, value.dense_shape))
 
 
-def sparse_tuple_to_texts(sp_tuple, alphabet):
-    indices = sp_tuple[0]
-    values = sp_tuple[1]
-    results = [''] * sp_tuple[2][0]
+def sparse_tuple_to_texts(sp_tuple):
+    indices, values, shape = sp_tuple
+    results = [bytearray() for _ in range(shape[0])]
     for i, index in enumerate(indices):
-        results[index[0]] += alphabet.string_from_label(values[i])
-    # List of strings
-    return results
+        results[index[0]].append(values[i])
+    return [res.decode('utf-8', 'replace') for res in results]
+    # return [bytes(res) for res in results]
 
 
 def evaluate(test_csvs, create_model, try_loading):
@@ -116,7 +115,7 @@ def evaluate(test_csvs, create_model, try_loading):
                     break
 
                 decoded = ctc_beam_search_decoder_batch(batch_logits, batch_lengths, Config.alphabet, FLAGS.beam_width,
-                                                        num_processes=num_processes, scorer=scorer)
+                                                        num_processes=num_processes, scorer=scorer, cutoff_prob=0.995, cutoff_top_n=300)
                 predictions.extend(d[0][1] for d in decoded)
                 ground_truths.extend(sparse_tensor_value_to_texts(batch_transcripts, Config.alphabet))
                 wav_filenames.extend(wav_filename.decode('UTF-8') for wav_filename in batch_wav_filenames)

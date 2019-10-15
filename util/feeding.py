@@ -102,7 +102,7 @@ def create_dataset(csvs, batch_size, cache_path='', train_phase=False):
 
     try:
         # Convert to character index arrays
-        df = df.apply(partial(text_to_char_array, alphabet=Config.alphabet), result_type='broadcast', axis=1)
+        df = df.apply(text_to_char_array, result_type='broadcast', axis=1)
     except ValueError as e:
         error_message, series, *_ = e.args
         log_error('While processing {}:\n  {}'.format(series['wav_filename'], error_message))

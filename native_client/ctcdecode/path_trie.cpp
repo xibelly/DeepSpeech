@@ -119,7 +119,11 @@ PathTrie* PathTrie::get_path_vec(std::vector<int>& output,
                                  std::vector<int>& timesteps,
                                  int stop,
                                  size_t max_steps) {
-  if (character == stop || character == ROOT_ || output.size() == max_steps) {
+  if ((stop != ROOT_ && (character & 0xC0) != 0x80) || character == ROOT_ || output.size() == max_steps) {
+    if ((stop != ROOT_ && (character & 0xC0) != 0x80) && character != ROOT_ && output.size() != max_steps) {
+      output.push_back(character);
+      timesteps.push_back(timestep);
+    }
     std::reverse(output.begin(), output.end());
     std::reverse(timesteps.begin(), timesteps.end());
     return this;
@@ -144,6 +148,32 @@ void PathTrie::iterate_to_vec(std::vector<PathTrie*>& output) {
   for (auto child : children_) {
     child.second->iterate_to_vec(output);
   }
+}
+
+void PathTrie::vec(std::vector<PathTrie*>& out) {
+  if (parent != nullptr) {
+    parent->vec(out);
+  }
+  out.push_back(this);
+}
+
+void PathTrie::print(const Alphabet& a) {
+  std::vector<PathTrie*> chain;
+  vec(chain);
+  std::string tr;
+  printf("characters:\t ");
+  for (PathTrie* el : chain) {
+    printf("%X ", el->character);
+    if (el->character != ROOT_) {
+      tr.append(a.StringFromLabel(el->character));
+    }
+  }
+  printf("\ntimesteps:\t ");
+  for (PathTrie* el : chain) {
+    printf("%d ", el->timestep);
+  }
+  printf("\n");
+  printf("transcript:\t %s\n", tr.c_str());
 }
 
 void PathTrie::remove() {

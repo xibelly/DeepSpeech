@@ -68,6 +68,6 @@ def calculate_report(wav_filenames, labels, decodings, losses):
     samples.sort(key=lambda s: s.loss)
 
     # Then order by WER (highest WER on top)
-    samples.sort(key=lambda s: s.wer, reverse=True)
+    samples.sort(key=lambda s: s.cer, reverse=True)
 
     return samples_wer, samples_cer, samples

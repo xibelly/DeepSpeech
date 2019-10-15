@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "fst/fstlib.h"
+#include "alphabet.h"
 
 /* Trie tree for prefix storing and manipulating, with a dictionary in
  * finite-state transducer for spelling correction.
@@ -43,6 +44,9 @@ public:
 
   // remove current path from root
   void remove();
+
+  void vec(std::vector<PathTrie*>& out);
+  void print(const Alphabet& a);
 
   float log_prob_b_prev;
   float log_prob_nb_prev;

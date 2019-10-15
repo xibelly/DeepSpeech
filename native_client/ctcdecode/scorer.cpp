@@ -85,16 +85,19 @@ void Scorer::setup(const std::string& lm_path, const std::string& trie_path)
     config.enumerate_vocab = &enumerate;
     language_model_.reset(lm::ngram::LoadVirtual(filename, config));
     auto vocab = enumerate.vocabulary;
-    for (size_t i = 0; i < vocab.size(); ++i) {
-      if (is_character_based_ && vocab[i] != UNK_TOKEN &&
-          vocab[i] != START_TOKEN && vocab[i] != END_TOKEN &&
-          get_utf8_str_len(enumerate.vocabulary[i]) > 1) {
-        is_character_based_ = false;
-      }
-    }
+    // for (size_t i = 0; i < vocab.size(); ++i) {
+    //   if (vocab[i] != UNK_TOKEN &&
+    //       vocab[i] != START_TOKEN &&
+    //       vocab[i] != END_TOKEN &&
+    //       get_utf8_str_len(vocab[i]) > 1) {
+    //     is_character_based_ = false;
+    //     break;
+    //   }
+    // }
+    is_character_based_ = false;
     // fill the dictionary for FST
     if (!is_character_based()) {
-      fill_dictionary(vocab, true);
+      fill_dictionary(vocab, false);
     }
   } else {
     config.load_method = util::LoadMethod::LAZY;
@@ -132,6 +135,7 @@ void Scorer::setup(const std::string& lm_path, const std::string& trie_path)
   }
 
   max_order_ = language_model_->Order();
+  // printf("max order: %d\n", max_order_);
 }
 
 void Scorer::save_dictionary(const std::string& path)
@@ -177,6 +181,7 @@ double Scorer::get_log_cond_prob(const std::vector<std::string>::const_iterator&
 
     // encounter OOV
     if (word_index == lm::kUNK) {
+      // printf("word %s OOV\n", it->c_str());
       return OOV_SCORE;
     }
 
@@ -266,6 +271,10 @@ std::vector<std::string> Scorer::make_ngram(PathTrie* prefix)
   PathTrie* new_node = nullptr;
 
   for (int order = 0; order < max_order_; order++) {
+    if (current_node->character == -1) {
+      break;
+    }
+
     std::vector<int> prefix_vec;
     std::vector<int> prefix_steps;
 
@@ -280,10 +289,6 @@ std::vector<std::string> Scorer::make_ngram(PathTrie* prefix)
     // reconstruct word
     std::string word = alphabet_.LabelsToString(prefix_vec);
     ngram.push_back(word);
-
-    if (new_node->character == -1) {
-      break;
-    }
   }
   std::reverse(ngram.begin(), ngram.end());
   return ngram;
@@ -296,7 +301,9 @@ void Scorer::fill_dictionary(const std::vector<std::string>& vocabulary, bool ad
   fst::StdVectorFst dictionary;
   // For each unigram convert to ints and put in trie
   for (const auto& word : vocabulary) {
-    add_word_to_dictionary(word, char_map_, add_space, SPACE_ID_ + 1, &dictionary);
+    if (word != START_TOKEN && word != UNK_TOKEN && word != END_TOKEN) {
+      add_word_to_dictionary(word, char_map_, add_space, SPACE_ID_ + 1, &dictionary);
+    }
   }
 
   /* Simplify FST

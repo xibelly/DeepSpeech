@@ -59,8 +59,10 @@ DecoderState::next(const double *probs,
     bool full_beam = false;
     if (ext_scorer_ != nullptr) {
       size_t num_prefixes = std::min(prefixes_.size(), beam_size_);
-      std::sort(
-          prefixes_.begin(), prefixes_.begin() + num_prefixes, prefix_compare);
+      std::partial_sort(prefixes_.begin(),
+                        prefixes_.begin() + num_prefixes,
+                        prefixes_.end(),
+                        prefix_compare);
 
       min_cutoff = prefixes_[num_prefixes - 1]->score +
                    std::log(prob[blank_id_]) - std::max(0.0, ext_scorer_->beta);
@@ -71,6 +73,7 @@ DecoderState::next(const double *probs,
         get_pruned_log_probs(prob, class_dim, cutoff_prob_, cutoff_top_n_);
     // loop over class dim
     for (size_t index = 0; index < log_prob_idx.size(); index++) {
+      // printf("abs time step: %d, no of prefixes: %d, beam_size: %d\n", abs_time_step_, prefixes_.size(), beam_size_);
       auto c = log_prob_idx[index].first;
       auto log_prob_c = log_prob_idx[index].second;
 
@@ -97,6 +100,8 @@ DecoderState::next(const double *probs,
         auto prefix_new = prefix->get_path_trie(c, abs_time_step_, log_prob_c);
 
         if (prefix_new != nullptr) {
+          // printf("new prefix from char %X: \n", (unsigned char)c);
+          // prefix_new->print(ext_scorer_->alphabet_);
           float log_p = -NUM_FLT_INF;
 
           if (c == prefix->character &&
@@ -108,7 +113,7 @@ DecoderState::next(const double *probs,
 
           // language model scoring
           if (ext_scorer_ != nullptr &&
-              (c == space_id_ || ext_scorer_->is_character_based())) {
+              (((c & 0xC0) != 0x80 && prefix->character != -1) || ext_scorer_->is_character_based())) {
             PathTrie *prefix_to_score = nullptr;
             // skip scoring the space
             if (ext_scorer_->is_character_based()) {
@@ -121,7 +126,16 @@ DecoderState::next(const double *probs,
             std::vector<std::string> ngram;
             ngram = ext_scorer_->make_ngram(prefix_to_score);
             bool bos = ngram.size() < ext_scorer_->get_max_order();
-            score = ext_scorer_->get_log_cond_prob(ngram, bos) * ext_scorer_->alpha;
+            score = ext_scorer_->get_log_cond_prob(ngram, bos);
+            // printf("scoring ngram: ");
+            // for (string s : ngram) {
+            //   for (char c : s) {
+            //     printf("%X ", (unsigned char)c);
+            //   }
+            //   printf(" (%s)| ", s.c_str());
+            // }
+            // printf(", score = %.2f\n\n", score);
+            score *= ext_scorer_->alpha;
             log_p += score;
             log_p += ext_scorer_->beta;
           }
@@ -131,6 +145,8 @@ DecoderState::next(const double *probs,
         }
       }  // end of loop over prefix
     }    // end of loop over alphabet
+
+    // printf("udpating and pruning\n");
 
     // update log probs
     prefixes_.clear();
@@ -165,10 +181,22 @@ DecoderState::decode() const
   if (ext_scorer_ != nullptr && !ext_scorer_->is_character_based()) {
     for (size_t i = 0; i < beam_size_ && i < prefixes_copy.size(); ++i) {
       auto prefix = prefixes_copy[i];
-      if (!prefix->is_empty() && prefix->character != space_id_) {
+      if (prefix->is_empty()) {
+        scores[prefix] = OOV_SCORE;
+      } else if (prefix->character != space_id_) {
         float score = 0.0;
         std::vector<std::string> ngram = ext_scorer_->make_ngram(prefix);
-        score = ext_scorer_->get_log_cond_prob(ngram) * ext_scorer_->alpha;
+        bool bos = ngram.size() < ext_scorer_->get_max_order();
+        score = ext_scorer_->get_log_cond_prob(ngram, bos);
+        // printf("scoring final ngram: ");
+        // for (string s : ngram) {
+        //   for (char c : s) {
+        //     printf("%X ", (unsigned char)c);
+        //   }
+        //   printf(" (%s)| ", s.c_str());
+        // }
+        // printf(", score = %.2f\n", score);
+        score *= ext_scorer_->alpha;
         score += ext_scorer_->beta;
         scores[prefix] += score;
       }
@@ -177,7 +205,10 @@ DecoderState::decode() const
 
   using namespace std::placeholders;
   size_t num_prefixes = std::min(prefixes_copy.size(), beam_size_);
-  std::sort(prefixes_copy.begin(), prefixes_copy.begin() + num_prefixes, std::bind(prefix_compare_external, _1, _2, scores));
+  std::partial_sort(prefixes_copy.begin(),
+                    prefixes_copy.begin() + num_prefixes,
+                    prefixes_copy.end(),
+                    std::bind(prefix_compare_external, _1, _2, scores));
 
   //TODO: expose this as an API parameter
   const int top_paths = 1;
