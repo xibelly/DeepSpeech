@@ -5,6 +5,7 @@ import re
 
 import numpy as np
 
+from util.flags import FLAGS
 from six.moves import range
 
 class Alphabet(object):
@@ -57,6 +58,32 @@ class Alphabet(object):
 
     def config_file(self):
         return self._config_file
+
+
+class UTF8Alphabet(object):
+    @staticmethod
+    def _string_from_label(_):
+        assert False
+
+    @staticmethod
+    def _label_from_string(_):
+        assert False
+
+    @staticmethod
+    def encode(string):
+        return np.frombuffer(string.encode('utf-8'), np.uint8).astype(np.int32)
+
+    @staticmethod
+    def decode(labels):
+        return bytes(labels).decode('utf-8', errors='replace')
+
+    @staticmethod
+    def size():
+        return 256
+
+    @staticmethod
+    def config_file():
+        return ''
 
 
 def text_to_char_array(series, alphabet):

@@ -1,8 +1,11 @@
 #include <algorithm>
 #include <iostream>
 #include <string>
+#include <limits>
+#include <unordered_map>
 
 #include "ctcdecode/scorer.h"
+#include "ctcdecode/path_trie.h"
 #include "alphabet.h"
 
 #ifdef DEBUG

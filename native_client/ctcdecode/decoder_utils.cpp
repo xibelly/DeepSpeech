@@ -54,29 +54,23 @@ std::vector<Output> get_beam_search_result(
 }
 
 size_t get_utf8_str_len(const std::string &str) {
-  size_t str_len = 0;
-  for (char c : str) {
-    str_len += ((c & 0xc0) != 0x80);
-  }
-  return str_len;
+  return str.length();
+}
+
+// Return weather a byte is a code point boundary (not a continuation byte).
+bool byte_is_codepoint_boundary(unsigned char c) {
+  // only continuation bytes have their most significant bits set to 10
+  return (c & 0xC0) != 0x80;
 }
 
 std::vector<std::string> split_utf8_str(const std::string &str) {
   std::vector<std::string> result;
-  std::string out_str;
 
   for (char c : str) {
-    if ((c & 0xc0) != 0x80)  // new UTF-8 character
-    {
-      if (!out_str.empty()) {
-        result.push_back(out_str);
-        out_str.clear();
-      }
-    }
-
-    out_str.append(1, c);
+    std::string ch(1, c);
+    result.push_back(ch);
   }
-  result.push_back(out_str);
+
   return result;
 }
 
@@ -152,20 +146,16 @@ bool add_word_to_dictionary(
   std::vector<int> int_word;
 
   for (auto &c : characters) {
-    if (c == " ") {
-      int_word.push_back(SPACE_ID);
+    auto int_c = char_map.find(c);
+    if (int_c != char_map.end()) {
+      int_word.push_back(int_c->second);
     } else {
-      auto int_c = char_map.find(c);
-      if (int_c != char_map.end()) {
-        int_word.push_back(int_c->second);
-      } else {
-        return false;  // return without adding
-      }
+      return false;  // return without adding
     }
   }
 
   if (add_space) {
-    int_word.push_back(SPACE_ID);
+    // int_word.push_back(SPACE_ID);
   }
 
   add_word_to_fst(int_word, dictionary);

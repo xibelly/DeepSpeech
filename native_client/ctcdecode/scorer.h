@@ -25,7 +25,9 @@ public:
   RetrieveStrEnumerateVocab() {}
 
   void Add(lm::WordIndex index, const StringPiece &str) {
-    vocabulary.push_back(std::string(str.data(), str.length()));
+    std::string s(str.data(), str.length());
+    // printf("%s\n", s.c_str());
+    vocabulary.push_back(s);
   }
 
   std::vector<std::string> vocabulary;
@@ -92,6 +94,9 @@ public:
   // save dictionary in file
   void save_dictionary(const std::string &path);
 
+  // return weather this label represents a boundary where beam scoring should happen
+  bool is_scoring_boundary(size_t label);
+
   // language model weight
   double alpha = 0.;
   // word insertion weight
@@ -118,6 +123,8 @@ private:
   int SPACE_ID_;
   Alphabet alphabet_;
   std::unordered_map<std::string, int> char_map_;
+
+  friend class DecoderState;
 };
 
 #endif  // SCORER_H_

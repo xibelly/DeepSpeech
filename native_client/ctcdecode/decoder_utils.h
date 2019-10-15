@@ -90,6 +90,9 @@ std::vector<std::string> split_utf8_str(const std::string &str);
 void add_word_to_fst(const std::vector<int> &word,
                      fst::StdVectorFst *dictionary);
 
+// Return weather a byte is a code point boundary (not a continuation byte).
+bool byte_is_codepoint_boundary(unsigned char c);
+
 // Add a word in string to dictionary
 bool add_word_to_dictionary(
     const std::string &word,
