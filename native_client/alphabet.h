@@ -20,20 +20,20 @@ public:
   Alphabet& operator=(const Alphabet&) = default;
 
   int init(const char *) {
-    size_ = 256;
+    size_ = 255;
     return 0;
   }
 
   const std::string StringFromLabel(unsigned int label) const {
     assert(label < size_);
     std::string foo = "a";
-    foo[0] = (char)label;
+    foo[0] = (char)label + 1;
     return foo;
   }
 
   unsigned int LabelFromString(const std::string& string) const {
     assert(string.size() == 1);
-    return (unsigned int)string[0];
+    return (unsigned int)string[0] - 1;
   }
 
   size_t GetSize() const {
@@ -41,11 +41,11 @@ public:
   }
 
   bool IsSpace(unsigned int label) const {
-    return label == ' ';
+    return label == (' ' - 1);
   }
 
   unsigned int GetSpaceLabel() const {
-    return ' ';
+    return ' ' - 1;
   }
 
   template <typename T>
