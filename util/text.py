@@ -71,15 +71,15 @@ class UTF8Alphabet(object):
 
     @staticmethod
     def encode(string):
-        return np.frombuffer(string.encode('utf-8'), np.uint8).astype(np.int32)
+        return np.frombuffer(string.encode('utf-8'), np.uint8).astype(np.int32) - 1
 
     @staticmethod
     def decode(labels):
-        return bytes(labels).decode('utf-8', errors='replace')
+        return bytes(np.asarray(labels, np.uint8) + 1).decode('utf-8', errors='replace')
 
     @staticmethod
     def size():
-        return 256
+        return 255
 
     @staticmethod
     def config_file():
