@@ -23,7 +23,7 @@ DecoderState::init(const Alphabet& alphabet,
   // assign special ids
   abs_time_step_ = 0;
   space_id_ = alphabet.GetSpaceLabel();
-  blank_id_ = alphabet.GetSize();
+  blank_id_ = 0;
 
   beam_size_ = beam_size;
   cutoff_prob_ = cutoff_prob;

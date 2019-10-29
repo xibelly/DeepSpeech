@@ -10,6 +10,7 @@ from multiprocessing import cpu_count
 import absl.app
 import numpy as np
 import progressbar
+import sys
 import tensorflow as tf
 import tensorflow.compat.v1 as tfv1
 
@@ -28,7 +29,8 @@ def sparse_tensor_value_to_texts(value, alphabet):
     Given a :class:`tf.SparseTensor` ``value``, return an array of Python strings
     representing its values, converting tokens to strings using ``alphabet``.
     """
-    return sparse_tuple_to_texts((value.indices, value.values, value.dense_shape), alphabet)
+    # return sparse_tuple_to_texts((value.indices, value.values, value.dense_shape), alphabet)
+    return [alphabet.decode(v) for v in value]
 
 
 def sparse_tuple_to_texts(sp_tuple, alphabet):
@@ -56,7 +58,7 @@ def evaluate(test_csvs, create_model, try_loading):
                                                  output_classes=tfv1.data.get_output_classes(test_sets[0]))
     test_init_ops = [iterator.make_initializer(test_set) for test_set in test_sets]
 
-    batch_wav_filename, (batch_x, batch_x_len), batch_y = iterator.get_next()
+    batch_wav_filename, batch_x, batch_x_len, batch_y, batch_y_len = iterator.get_next()
 
     # One rate per layer
     no_dropout = [None] * 6
@@ -68,9 +70,11 @@ def evaluate(test_csvs, create_model, try_loading):
     # Transpose to batch major and apply softmax for decoder
     transposed = tf.nn.softmax(tf.transpose(a=logits, perm=[1, 0, 2]))
 
-    loss = tfv1.nn.ctc_loss(labels=batch_y,
-                          inputs=logits,
-                          sequence_length=batch_x_len)
+    loss = tf.nn.ctc_loss_v2(labels=batch_y,
+                             label_length=batch_y_len,
+                             logits=logits,
+                             logit_length=batch_x_len,
+                             blank_index=0)
 
     tfv1.train.get_or_create_global_step()
 

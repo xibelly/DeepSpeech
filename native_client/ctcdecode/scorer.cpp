@@ -65,7 +65,7 @@ void Scorer::setup(const std::string& lm_path, const std::string& trie_path)
 
   SPACE_ID_ = alphabet_.GetSpaceLabel();
 
-  for (int i = 0; i < alphabet_.GetSize(); i++) {
+  for (int i = 1; i < alphabet_.GetSize(); i++) {
     // The initial state of FST is state 0, hence the index of chars in
     // the FST should start from 1 to avoid the conflict with the initial
     // state, otherwise wrong decoding results would be given.

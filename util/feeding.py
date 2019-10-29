@@ -81,10 +81,10 @@ def audiofile_to_features(wav_filename, train_phase=False):
     return features, features_len
 
 
-def entry_to_features(wav_filename, transcript, train_phase):
+def entry_to_features(wav_filename, transcript, transcript_len, train_phase):
     # https://bugs.python.org/issue32117
     features, features_len = audiofile_to_features(wav_filename, train_phase=train_phase)
-    return wav_filename, features, features_len, tf.SparseTensor(*transcript)
+    return wav_filename, features, features_len, transcript, transcript_len
 
 
 def to_sparse_tuple(sequence):
@@ -110,7 +110,7 @@ def create_dataset(csvs, batch_size, cache_path='', train_phase=False):
 
     def generate_values():
         for _, row in df.iterrows():
-            yield row.wav_filename, to_sparse_tuple(row.transcript)
+            yield row.wav_filename, row.transcript, len(row.transcript)
 
     # Batching a dataset of 2D SparseTensors creates 3D batches, which fail
     # when passed to tf.nn.ctc_loss, so we reshape them to remove the extra
@@ -119,19 +119,20 @@ def create_dataset(csvs, batch_size, cache_path='', train_phase=False):
         shape = sparse.dense_shape
         return tf.sparse.reshape(sparse, [shape[0], shape[2]])
 
-    def batch_fn(wav_filenames, features, features_len, transcripts):
-        features = tf.data.Dataset.zip((features, features_len))
-        features = features.padded_batch(batch_size,
-                                         padded_shapes=([None, Config.n_input], []))
-        transcripts = transcripts.batch(batch_size).map(sparse_reshape)
+    def batch_fn(wav_filenames, features, features_len, transcripts, transcripts_len):
+        # features = tf.data.Dataset.zip((features, features_len))
+        features = features.padded_batch(batch_size, padded_shapes=(None, Config.n_input,))
+        features_len = features_len.batch(batch_size)
+        transcripts = transcripts.padded_batch(batch_size, padded_shapes=(None,))
+        transcripts_len = transcripts_len.batch(batch_size)
         wav_filenames = wav_filenames.batch(batch_size)
-        return tf.data.Dataset.zip((wav_filenames, features, transcripts))
+        return tf.data.Dataset.zip((wav_filenames, features, features_len, transcripts, transcripts_len))
 
     num_gpus = len(Config.available_devices)
     process_fn = partial(entry_to_features, train_phase=train_phase)
 
     dataset = (tf.data.Dataset.from_generator(generate_values,
-                                              output_types=(tf.string, (tf.int64, tf.int32, tf.int64)))
+                                              output_types=(tf.string, tf.int32, tf.int32))
                               .map(process_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE))
 
     if cache_path is not None:

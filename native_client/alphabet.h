@@ -24,7 +24,7 @@ public:
     if (!in) {
       return 1;
     }
-    unsigned int label = 0;
+    unsigned int label = 1;
     space_label_ = -2;
     for (std::string line; std::getline(in, line);) {
       if (line.size() == 2 && line[0] == '\\' && line[1] == '#') {
@@ -36,18 +36,23 @@ public:
       if (line == " ") {
         space_label_ = label;
       }
-      label_to_str_.push_back(line);
+      label_to_str_[label] = line;
       str_to_label_[line] = label;
       ++label;
     }
-    size_ = label;
+    size_ = label - 1;
     in.close();
     return 0;
   }
 
   const std::string& StringFromLabel(unsigned int label) const {
-    assert(label < size_);
-    return label_to_str_[label];
+    auto it = label_to_str_.find(label);
+    if (it != label_to_str_.end()) {
+      return it->second;
+    } else {
+      std::cerr << "Invalid label " << label << std::endl;
+      abort();
+    }
   }
 
   unsigned int LabelFromString(const std::string& string) const {
@@ -55,7 +60,7 @@ public:
     if (it != str_to_label_.end()) {
       return it->second;
     } else {
-      std::cerr << "Invalid label " << string << std::endl;
+      std::cerr << "Invalid string " << string << std::endl;
       abort();
     }
   }
@@ -84,7 +89,7 @@ public:
 private:
   size_t size_;
   unsigned int space_label_;
-  std::vector<std::string> label_to_str_;
+  std::unordered_map<unsigned int, std::string> label_to_str_;
   std::unordered_map<std::string, unsigned int> str_to_label_;
 };
 
