@@ -122,15 +122,19 @@ def create_dataset(csvs, batch_size, cache_path='', train_phase=False):
     num_gpus = len(Config.available_devices)
     process_fn = partial(entry_to_features, train_phase=train_phase)
 
+    opts = tf.data.Options()
+    opts.experimental_slack = True
+    opts.experimental_optimization.apply_default_optimizations = True
+    opts.experimental_optimization.autotune = True
+    opts.experimental_optimization.autotune_cpu_budget = True
+    opts.experimental_optimization.map_parallelization = True
+
     dataset = (tf.data.Dataset.from_generator(generate_values,
                                               output_types=(tf.string, (tf.int64, tf.int32, tf.int64)))
-                              .map(process_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE))
-
-    if cache_path is not None:
-        dataset = dataset.cache(cache_path)
-
-    dataset = (dataset.window(batch_size, drop_remainder=True).flat_map(batch_fn)
-                      .prefetch(num_gpus))
+                              .map(process_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+                              .window(batch_size, drop_remainder=True).flat_map(batch_fn)
+                              .prefetch(1)
+                              .with_options(opts))
 
     return dataset
 

@@ -210,14 +210,14 @@ def create_model(batch_x, seq_length, dropout, reuse=False, batch_size=None, pre
 # Conveniently, this loss function is implemented in TensorFlow.
 # Thus, we can simply make use of this implementation to define our loss.
 
-def calculate_mean_edit_distance_and_loss(iterator, dropout, reuse):
+def calculate_mean_edit_distance_and_loss(batch, dropout, reuse):
     r'''
     This routine beam search decodes a mini-batch and calculates the loss and mean edit distance.
     Next to total and average loss it returns the mean edit distance,
     the decoded result and the batch's original Y.
     '''
     # Obtain the next batch of data
-    batch_filenames, (batch_x, batch_seq_len), batch_y = iterator.get_next()
+    batch_filenames, batch_x, batch_seq_len, batch_y = batch
 
     if FLAGS.use_cudnn_rnn:
         rnn_impl = rnn_impl_cudnn_rnn
@@ -288,6 +288,13 @@ def get_tower_results(iterator, optimizer, dropout_rates):
     # Aggregate any non finite files in the batches
     tower_non_finite_files = []
 
+    global_filenames, (global_x, global_seq_len), global_y = iterator.get_next()
+
+    batch_filenames = tf.split(global_filenames, num_or_size_splits=len(Config.available_devices))
+    batch_x = tf.split(global_x, num_or_size_splits=len(Config.available_devices))
+    batch_seq_len = tf.split(global_seq_len, num_or_size_splits=len(Config.available_devices))
+    batch_y = tf.sparse.split(sp_input=global_y, num_split=len(Config.available_devices), axis=0)
+
     with tfv1.variable_scope(tfv1.get_variable_scope()):
         # Loop over available_devices
         for i in range(len(Config.available_devices)):
@@ -298,7 +305,7 @@ def get_tower_results(iterator, optimizer, dropout_rates):
                 with tf.name_scope('tower_%d' % i):
                     # Calculate the avg_loss and mean_edit_distance and retrieve the decoded
                     # batch along with the original batch's labels (Y) of this tower
-                    avg_loss, non_finite_files = calculate_mean_edit_distance_and_loss(iterator, dropout_rates, reuse=i > 0)
+                    avg_loss, non_finite_files = calculate_mean_edit_distance_and_loss((batch_filenames[i], batch_x[i], batch_seq_len[i], batch_y[i]), dropout_rates, reuse=i > 0)
 
                     # Allow for variables to be re-used by the next tower
                     tfv1.get_variable_scope().reuse_variables()
@@ -430,7 +437,7 @@ def train():
 
     # Create training and validation datasets
     train_set = create_dataset(FLAGS.train_files.split(','),
-                               batch_size=FLAGS.train_batch_size,
+                               batch_size=FLAGS.train_batch_size * len(Config.available_devices),
                                cache_path=FLAGS.feature_cache if do_cache_dataset else None,
                                train_phase=True)
 
@@ -443,7 +450,7 @@ def train():
 
     if FLAGS.dev_files:
         dev_csvs = FLAGS.dev_files.split(',')
-        dev_sets = [create_dataset([csv], batch_size=FLAGS.dev_batch_size, train_phase=False) for csv in dev_csvs]
+        dev_sets = [create_dataset([csv], batch_size=FLAGS.dev_batch_size * len(Config.available_devices), train_phase=False) for csv in dev_csvs]
         dev_init_ops = [iterator.make_initializer(dev_set) for dev_set in dev_sets]
 
     # Dropout
