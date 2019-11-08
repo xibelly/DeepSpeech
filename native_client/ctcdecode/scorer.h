@@ -121,6 +121,8 @@ private:
   int SPACE_ID_;
   Alphabet alphabet_;
   std::unordered_map<std::string, int> char_map_;
+
+  // friend class DecoderState;
 };
 
 #endif  // SCORER_H_
